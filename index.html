@@ -1,0 +1,630 @@
+﻿<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Sistema Inventario - Escáner de Códigos</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap');
+  :root{
+    --bg1:#040014;
+    --bg2:#071233;
+    --neon1:#00ffe1;
+    --neon2:#9b57ff;
+    --accent:#ff3b7a;
+    --card: rgba(255,255,255,0.03);
+    --glass: rgba(255,255,255,0.04);
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;
+    font-family: 'Orbitron', monospace;
+    background: radial-gradient(circle at 10% 10%, #071233 0%, #040014 45%), linear-gradient(180deg,#000 0%, #021 100%);
+    color: #cfeffd;
+    min-height:100vh;
+    -webkit-font-smoothing:antialiased;
+  }
+  header{
+    padding:18px 20px;
+    display:flex;
+    align-items:center;
+    gap:16px;
+    border-bottom:1px solid rgba(255,255,255,0.04);
+    background:linear-gradient(90deg, rgba(155,87,255,0.04), rgba(0,255,225,0.02));
+  }
+  .logo {
+    width:48px;height:48px;border-radius:10px;
+    background: linear-gradient(135deg,var(--neon2),var(--neon1));
+    box-shadow: 0 6px 24px rgba(155,87,255,0.12), 0 0 12px rgba(0,255,225,0.06);
+    display:flex;align-items:center;justify-content:center;font-weight:700;
+  }
+  h1{font-size:16px;margin:0}
+  .subtitle{opacity:0.8;font-size:12px;margin-left:6px}
+  main{display:flex;gap:18px;padding:18px}
+  /* left column (controls) */
+  .col{flex:1;min-width:320px}
+  .card{
+    background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+    border: 1px solid rgba(255,255,255,0.04);
+    padding:14px;border-radius:12px;margin-bottom:14px;backdrop-filter: blur(6px);
+  }
+  .section-title{font-size:13px;color:var(--neon1);margin:0 0 8px 0}
+  label{display:block;font-size:11px;margin:8px 0 6px 0;opacity:0.85}
+  input[type="text"], input[type="number"], select, textarea {
+    width:100%;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);
+    background:transparent;color:inherit;font-size:13px;
+  }
+  .row{display:flex;gap:8px}
+  .btn{
+    display:inline-block;padding:10px 12px;border-radius:10px;border:1px solid rgba(255,255,255,0.06);
+    background:transparent;color:var(--neon1);cursor:pointer;margin-top:8px;font-weight:700;
+    box-shadow: 0 6px 18px rgba(0,255,225,0.03);
+  }
+  .btn.positive{border-color:rgba(0,255,225,0.18);color:var(--neon1)}
+  .btn.warn{border-color:rgba(155,87,255,0.18);color:var(--neon2)}
+  .small{font-size:11px;padding:6px 8px;border-radius:8px}
+  .muted{opacity:0.7;font-size:12px}
+  /* scanner view */
+  #cameraView{width:100%;height:280px;border-radius:10px;background:linear-gradient(180deg,#010018,#000010);display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative}
+  #videoElement{width:100%;height:100%;object-fit:cover}
+  .overlay { position:absolute;inset:0;pointer-events:none;border:2px dashed rgba(0,255,225,0.08); }
+  .barcode-detected{position:absolute;left:12px;bottom:12px;background:rgba(0,0,0,0.5);padding:8px;border-radius:8px;color:var(--neon1);font-weight:700}
+  /* inventory list */
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{padding:8px;text-align:left;border-bottom:1px dashed rgba(255,255,255,0.03)}
+  .tag{display:inline-block;padding:4px 8px;border-radius:8px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.02);font-size:11px}
+  footer{padding:12px;text-align:center;opacity:0.6;font-size:12px}
+  .flex{display:flex;gap:8px;align-items:center}
+  .right{margin-left:auto}
+  /* responsive */
+  @media (max-width:900px){
+    main{flex-direction:column;padding:12px}
+    #cameraView{height:220px}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">INV</div>
+  <div>
+    <h1>Inventario & Escáner • Tienda</h1>
+    <div class="subtitle">Cámara → Escanea código → muestra precio / gestiona stock</div>
+  </div>
+  <div class="right muted">Guardado automático • localStorage</div>
+</header>
+
+<main>
+  <!-- LEFT: Scanner + Add product + Quick sell -->
+  <div class="col">
+    <div class="card">
+      <div class="section-title">Escáner (cámara)</div>
+      <div id="cameraView">
+        <video id="videoElement" autoplay playsinline></video>
+        <div class="overlay"></div>
+        <div id="detectedBadge" class="barcode-detected" style="display:none"></div>
+      </div>
+      <div class="flex" style="margin-top:8px">
+        <button id="btnStartCam" class="btn positive small">▶ Iniciar cámara</button>
+        <button id="btnStopCam" class="btn small">■ Detener</button>
+        <div style="margin-left:auto" class="muted">Soporta BarcodeDetector (recomendado)</div>
+      </div>
+      <div style="margin-top:10px">
+        <label>Código detectado / manual</label>
+        <div class="row">
+          <input id="manualCode" type="text" placeholder="Ingresa o pega código" />
+          <button id="btnLookup" class="btn warn small">Buscar</button>
+        </div>
+        <div id="productFound" style="margin-top:10px"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">Agregar / Editar Producto</div>
+      <label>Código de barras (GTIN / EAN / UPC)</label>
+      <input id="p_code" type="text" placeholder="ej: 7701234567890" />
+      <label>Nombre del producto</label>
+      <input id="p_name" type="text" placeholder="ej: Arroz 1kg" />
+      <label>Categoría</label>
+      <input id="p_cat" type="text" placeholder="ej: Alimentación" />
+      <label>Precio (unidad)</label>
+      <input id="p_price" type="number" min="0" step="0.01" placeholder="ej: 3500" />
+      <label>Stock inicial</label>
+      <input id="p_stock" type="number" min="0" step="1" placeholder="ej: 10" />
+      <div class="row">
+        <button id="btnAdd" class="btn positive">➕ Agregar / Actualizar</button>
+        <button id="btnClearForm" class="btn">Limpiar</button>
+      </div>
+      <div class="muted" style="margin-top:8px">Si el código ya existe, el botón actualizará el producto.</div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">Venta rápida</div>
+      <label>Código (escanear o pegar)</label>
+      <div class="row">
+        <input id="sell_code" type="text" placeholder="Código a vender" />
+        <input id="sell_qty" type="number" min="1" value="1" style="width:80px" />
+      </div>
+      <div class="row">
+        <button id="btnSell" class="btn positive">Vender</button>
+        <button id="btnCancelSale" class="btn">Cancelar</button>
+      </div>
+      <div id="sellResult" style="margin-top:8px"></div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">Copia de seguridad / Importar</div>
+      <div class="row">
+        <button id="btnExport" class="btn">📤 Exportar JSON</button>
+        <button id="btnImport" class="btn">📥 Importar JSON</button>
+        <input id="fileImport" type="file" accept="application/json" style="display:none" />
+      </div>
+      <div class="muted" style="margin-top:8px">Exporta tus datos antes de hacer cambios masivos.</div>
+    </div>
+  </div>
+
+  <!-- RIGHT: Inventory list, history, reports -->
+  <div class="col">
+    <div class="card">
+      <div class="section-title">Inventario</div>
+      <div style="max-height:260px;overflow:auto">
+        <table id="inventoryTable">
+          <thead><tr><th>Código</th><th>Nombre</th><th>Cat</th><th>Precio</th><th>Stock</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div style="margin-top:8px">
+        <label>Buscar inventario</label>
+        <input id="searchInv" type="text" placeholder="Nombre, código o categoría" />
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">Historial de ventas</div>
+      <div style="max-height:220px;overflow:auto">
+        <table id="salesTable">
+          <thead><tr><th>Fecha</th><th>Producto</th><th>C</th><th>Total</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div style="margin-top:8px" class="muted">Se guarda cada venta y se puede exportar.</div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">Reportes</div>
+      <div id="reportArea">
+        <p class="muted">Cargando reportes...</p>
+      </div>
+      <div style="margin-top:8px" class="row">
+        <button id="btnRefreshReport" class="btn">Actualizar</button>
+        <button id="btnClearData" class="btn" title="Elimina inventario y ventas">🧹 Limpiar datos</button>
+      </div>
+    </div>
+  </div>
+</main>
+
+<footer>
+  Creado por AnthonyRzGamez • Sistema local (sin servidor). Abrir en Chrome para mejor compatibilidad de cámara.
+</footer>
+
+<script>
+/*
+  Mini-Sistema Inventario + Escáner
+  - Usa localStorage para persistencia
+  - Soporta BarcodeDetector si el navegador lo tiene
+  - Funciones: add/update/delete product, sell product (genera historial), reports, import/export JSON
+*/
+
+// --- Storage keys
+const KEY_INV = 'tienda_inventory_v1';
+const KEY_SALES = 'tienda_sales_v1';
+
+// --- App state
+let inventory = []; // {code, name, category, price, stock}
+let sales = [];     // {timestamp, code, name, qty, total}
+let videoStream = null;
+let barcodeDetector = null;
+let scanning = false;
+
+// --- Utilities
+function saveAll(){
+  localStorage.setItem(KEY_INV, JSON.stringify(inventory));
+  localStorage.setItem(KEY_SALES, JSON.stringify(sales));
+}
+function loadAll(){
+  inventory = JSON.parse(localStorage.getItem(KEY_INV) || '[]');
+  sales = JSON.parse(localStorage.getItem(KEY_SALES) || '[]');
+}
+function formatCurrency(v){ return '$ ' + Number(v).toFixed(2); }
+function nowStr(){ return new Date().toLocaleString(); }
+
+// --- Inventory functions
+function addOrUpdateProduct(p){
+  const idx = inventory.findIndex(x=>x.code===p.code);
+  if(idx>=0){
+    // update: keep stock additive or replace? We'll replace fields but keep stock additive if provided
+    inventory[idx].name = p.name;
+    inventory[idx].category = p.category;
+    inventory[idx].price = Number(p.price);
+    inventory[idx].stock = Number(p.stock);
+  } else {
+    inventory.push({...p, price:Number(p.price), stock:Number(p.stock)});
+  }
+  saveAll();
+  renderInventory();
+  renderReport();
+}
+
+function deleteProduct(code){
+  inventory = inventory.filter(x=>x.code!==code);
+  saveAll();
+  renderInventory();
+  renderReport();
+}
+
+function changeStock(code, delta){
+  const it = inventory.find(x=>x.code===code);
+  if(!it) return false;
+  it.stock = Math.max(0, Number(it.stock) + Number(delta));
+  saveAll();
+  renderInventory();
+  renderReport();
+  return true;
+}
+
+function findProduct(code){
+  return inventory.find(x=>x.code===code);
+}
+
+// --- Sales
+function registerSale(code, qty){
+  const p = findProduct(code);
+  if(!p) return {ok:false, msg:'Producto no encontrado'};
+  qty = Number(qty);
+  if(qty<=0) return {ok:false, msg:'Cantidad inválida'};
+  if(p.stock < qty) return {ok:false, msg:'Stock insuficiente'};
+  const total = Number((p.price*qty).toFixed(2));
+  // decrease stock
+  p.stock -= qty;
+  const entry = {timestamp: new Date().toISOString(), code:p.code, name:p.name, qty, total};
+  sales.unshift(entry); // newest first
+  saveAll();
+  renderInventory();
+  renderSales();
+  renderReport();
+  return {ok:true, entry};
+}
+
+// --- Renderers
+function renderInventory(filter=''){
+  const tbody = document.querySelector('#inventoryTable tbody');
+  tbody.innerHTML='';
+  const q = filter.trim().toLowerCase();
+  inventory.forEach(p=>{
+    if(q){
+      const hay = (p.name+p.code+p.category).toLowerCase();
+      if(!hay.includes(q)) return;
+    }
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td style="width:140px"><span class="tag">${p.code}</span></td>
+      <td>${p.name}</td>
+      <td>${p.category||'-'}</td>
+      <td>${formatCurrency(p.price)}</td>
+      <td>${p.stock}</td>
+      <td>
+        <div class="row">
+          <button class="btn small" onclick="fillForm('${p.code}')">✏️</button>
+          <button class="btn small" onclick="promptAdjust('${p.code}')">➕/➖ stock</button>
+          <button class="btn small" onclick="confirmDelete('${p.code}')">🗑️</button>
+        </div>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+function renderSales(){
+  const tbody = document.querySelector('#salesTable tbody');
+  tbody.innerHTML='';
+  sales.slice(0,100).forEach(s=>{
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td style="width:150px">${new Date(s.timestamp).toLocaleString()}</td>
+                    <td>${s.name}</td>
+                    <td>${s.qty}</td>
+                    <td>${formatCurrency(s.total)}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+function renderReport(){
+  const area = document.getElementById('reportArea');
+  const totalSales = sales.reduce((a,b)=>a+(Number(b.total)||0),0);
+  const totalItems = inventory.reduce((a,b)=>a+Number(b.stock||0),0);
+  const inventoryValue = inventory.reduce((a,b)=>a+(Number(b.price||0)*Number(b.stock||0)),0);
+  // product más vendido
+  const soldCount = {};
+  sales.forEach(s => { soldCount[s.code] = (soldCount[s.code]||0) + s.qty; });
+  let top = null;
+  for(const code in soldCount){
+    if(!top || soldCount[code] > soldCount[top]) top = code;
+  }
+  const topName = top ? (findProduct(top)?.name || sales.find(s=>s.code===top).name) : '-';
+  area.innerHTML = `
+    <p>Total ventas: <strong>${formatCurrency(totalSales)}</strong></p>
+    <p>Valor inventario: <strong>${formatCurrency(inventoryValue)}</strong></p>
+    <p>Unidades en stock: <strong>${totalItems}</strong></p>
+    <p>Producto más vendido: <strong>${topName}</strong></p>
+  `;
+}
+
+// --- Form helpers
+function fillForm(code){
+  const p = findProduct(code);
+  if(!p) return;
+  document.getElementById('p_code').value = p.code;
+  document.getElementById('p_name').value = p.name;
+  document.getElementById('p_cat').value = p.category;
+  document.getElementById('p_price').value = p.price;
+  document.getElementById('p_stock').value = p.stock;
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+
+function confirmDelete(code){
+  if(confirm('Eliminar producto con código ' + code + ' ?')) deleteProduct(code);
+}
+
+function promptAdjust(code){
+  const delta = prompt('Ingresa número (+ para sumar, - para restar) por ejemplo 5 o -3', '0');
+  if(delta===null) return;
+  const n = Number(delta);
+  if(isNaN(n)) return alert('Valor inválido');
+  changeStock(code, n);
+}
+
+// --- Export / Import
+function exportJSON(){
+  const payload = {inventory, sales, meta:{exportedAt:new Date().toISOString()}};
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'tienda_backup.json'; a.click();
+  URL.revokeObjectURL(url);
+}
+function importJSONFile(file){
+  const reader = new FileReader();
+  reader.onload = e=>{
+    try {
+      const data = JSON.parse(e.target.result);
+      if(Array.isArray(data.inventory) && Array.isArray(data.sales)){
+        if(confirm('Importar reemplazará los datos actuales. ¿Continuar?')){
+          inventory = data.inventory; sales = data.sales;
+          saveAll(); renderInventory(); renderSales(); renderReport();
+          alert('Importación completada');
+        }
+      } else {
+        alert('Archivo inválido: formato incorrecto');
+      }
+    } catch(err){
+      alert('Error leyendo JSON: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
+}
+
+// --- Camera & Barcode detection
+async function initBarcodeSupport(){
+  // check BarcodeDetector availability
+  if('BarcodeDetector' in window){
+    try {
+      const supported = await BarcodeDetector.getSupportedFormats();
+      barcodeDetector = new BarcodeDetector({formats: supported});
+      console.log('BarcodeDetector OK', supported);
+    } catch(e){
+      console.log('BarcodeDetector no disponible', e);
+      barcodeDetector = null;
+    }
+  } else {
+    barcodeDetector = null;
+  }
+}
+
+async function startCamera(){
+  if(scanning) return;
+  try {
+    const constraints = { video: { facingMode:'environment', width:{ideal:1280}, height:{ideal:720} } };
+    videoStream = await navigator.mediaDevices.getUserMedia(constraints);
+    const v = document.getElementById('videoElement');
+    v.srcObject = videoStream;
+    scanning = true;
+    detectLoop();
+    document.getElementById('detectedBadge').style.display='none';
+  } catch(err){
+    alert('Error al acceder a la cámara: ' + err.message);
+  }
+}
+
+function stopCamera(){
+  scanning = false;
+  if(videoStream){
+    const tracks = videoStream.getTracks();
+    tracks.forEach(t=>t.stop());
+    videoStream = null;
+  }
+  const v = document.getElementById('videoElement');
+  v.srcObject = null;
+}
+
+async function detectLoop(){
+  const v = document.getElementById('videoElement');
+  const badge = document.getElementById('detectedBadge');
+  if(!scanning || !v) return;
+  try {
+    if(barcodeDetector){
+      // BarcodeDetector path (fast)
+      const bitmap = await createImageBitmapFromVideo(v);
+      const barcodes = await barcodeDetector.detect(bitmap);
+      bitmap.close();
+      if(barcodes && barcodes.length){
+        const code = barcodes[0].rawValue;
+        badge.innerText = 'Código: ' + code;
+        badge.style.display='block';
+        onBarcodeDetected(code);
+      } else {
+        badge.style.display='none';
+      }
+    } else {
+      // fallback: no detector -> try manual capture every 800ms (not real barcode decode)
+      // We can't decode without a lib; we just show suggestion to paste code manually.
+      badge.innerText = 'Sin soporte de BarcodeDetector. Pega el código manualmente.';
+      badge.style.display='block';
+    }
+  } catch(err){
+    console.warn('Detect loop error', err);
+  }
+  setTimeout(()=>{ if(scanning) detectLoop(); }, 700);
+}
+
+async function createImageBitmapFromVideo(video){
+  // create an offscreen canvas snapshot for barcodeDetector
+  const w = video.videoWidth;
+  const h = video.videoHeight;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(video,0,0,w,h);
+  return await createImageBitmap(canvas);
+}
+
+let lastDetectedAt = 0;
+function onBarcodeDetected(code){
+  // debounce: only handle once per 2 seconds
+  const now = Date.now();
+  if(now - lastDetectedAt < 2000) return;
+  lastDetectedAt = now;
+  document.getElementById('manualCode').value = code;
+  lookupAndShow(code);
+}
+
+// --- Lookup UI
+function lookupAndShow(code){
+  const p = findProduct(code);
+  const container = document.getElementById('productFound');
+  if(p){
+    container.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <div style="font-weight:700">${p.name}</div>
+          <div class="muted">${p.category || ''} • ${p.code}</div>
+          <div style="margin-top:6px">${formatCurrency(p.price)} • Stock: ${p.stock}</div>
+        </div>
+        <div style="text-align:right">
+          <button class="btn positive" onclick="fillForm('${p.code}')">Editar</button>
+          <button class="btn" onclick="document.getElementById('sell_code').value='${p.code}'">Vender</button>
+        </div>
+      </div>
+    `;
+  } else {
+    container.innerHTML = `<div style="color:#ffccaa">Producto no encontrado. Puedes agregarlo con el formulario.</div>`;
+  }
+}
+
+// --- Event wiring
+document.getElementById('btnStartCam').addEventListener('click', async ()=>{
+  await initBarcodeSupport();
+  startCamera();
+});
+document.getElementById('btnStopCam').addEventListener('click', ()=>{
+  stopCamera();
+});
+document.getElementById('btnLookup').addEventListener('click', ()=>{
+  const code = document.getElementById('manualCode').value.trim();
+  if(!code) return alert('Ingresa código');
+  lookupAndShow(code);
+});
+
+// Add / Update product
+document.getElementById('btnAdd').addEventListener('click', ()=>{
+  const code = document.getElementById('p_code').value.trim();
+  const name = document.getElementById('p_name').value.trim();
+  const cat = document.getElementById('p_cat').value.trim();
+  const price = Number(document.getElementById('p_price').value);
+  const stock = Number(document.getElementById('p_stock').value);
+  if(!code || !name || isNaN(price) || isNaN(stock)) return alert('Completa todos los campos correctamente');
+  addOrUpdateProduct({code,name,category:cat,price,stock});
+  document.getElementById('p_code').value=''; document.getElementById('p_name').value=''; document.getElementById('p_cat').value='';
+  document.getElementById('p_price').value=''; document.getElementById('p_stock').value='';
+});
+
+// clear form
+document.getElementById('btnClearForm').addEventListener('click', ()=>{
+  document.getElementById('p_code').value=''; document.getElementById('p_name').value=''; document.getElementById('p_cat').value='';
+  document.getElementById('p_price').value=''; document.getElementById('p_stock').value='';
+});
+
+// sell
+document.getElementById('btnSell').addEventListener('click', ()=>{
+  const code = document.getElementById('sell_code').value.trim();
+  const qty = Number(document.getElementById('sell_qty').value);
+  if(!code) return alert('Código requerido');
+  const res = registerSale(code, qty);
+  const el = document.getElementById('sellResult');
+  if(res.ok){
+    el.innerHTML = `<span style="color: #aaffcc">✅ Venta registrada • Total: ${formatCurrency(res.entry.total)}</span>`;
+    document.getElementById('sell_code').value=''; document.getElementById('sell_qty').value=1;
+  } else {
+    el.innerHTML = `<span style="color: #ffbbbb">❌ ${res.msg}</span>`;
+  }
+});
+
+// export / import
+document.getElementById('btnExport').addEventListener('click', exportJSON);
+document.getElementById('btnImport').addEventListener('click', ()=>{
+  document.getElementById('fileImport').click();
+});
+document.getElementById('fileImport').addEventListener('change', (e)=>{
+  const f = e.target.files[0];
+  if(f) importJSONFile(f);
+  e.target.value = '';
+});
+
+// search inventory
+document.getElementById('searchInv').addEventListener('input', (e)=>{
+  renderInventory(e.target.value);
+});
+
+// clear data
+document.getElementById('btnClearData').addEventListener('click', ()=>{
+  if(confirm('Esto eliminará inventario y ventas. ¿Estás seguro?')){
+    inventory = []; sales = []; saveAll(); renderInventory(); renderSales(); renderReport();
+    alert('Datos limpiados');
+  }
+});
+
+// refresh report
+document.getElementById('btnRefreshReport').addEventListener('click', renderReport);
+
+// initial load
+loadAll();
+
+// seed with sample if empty (optional)
+if(inventory.length===0 && sales.length===0){
+  inventory = [
+    {code:'7701234567890', name:'Arroz 1kg', category:'Alimentación', price:3000, stock:12},
+    {code:'7700987654321', name:'Leche 1L', category:'Lácteos', price:4500, stock:8},
+    {code:'7701112223334', name:'Refresco 500ml', category:'Bebidas', price:2500, stock:20}
+  ];
+  saveAll();
+}
+
+renderInventory();
+renderSales();
+renderReport();
+
+// Inform user about BarcodeDetector support
+(async ()=>{ if('BarcodeDetector' in window){ try{ await initBarcodeSupport(); if(!barcodeDetector) console.log('BarcodeDetector not usable'); }catch(e){ console.log('init bd',e); } } else { console.log('BarcodeDetector no disponible en este navegador. Para escanear usa la entrada manual'); } })();
+
+</script>
+</body>
+</html>
